@@ -15,6 +15,7 @@ import {
   contactName,
   fmtDuration,
   fmtDateTime,
+  extractKeywords,
 } from "@/lib/constants";
 
 function Badge({ label, color }) {
@@ -26,7 +27,8 @@ function Badge({ label, color }) {
   );
 }
 
-function highlight(text, q) {
+// Manual transcript-search highlighting (takes priority when the box has text).
+function highlightSearch(text, q) {
   if (!q) return text;
   const idx = text.toLowerCase().indexOf(q.toLowerCase());
   if (idx === -1) return text;
@@ -36,6 +38,25 @@ function highlight(text, q) {
       <mark>{text.slice(idx, idx + q.length)}</mark>
       {text.slice(idx + q.length)}
     </>
+  );
+}
+
+// Auto keyword highlighting — surfaces the words actually coming out of the
+// caller's mouth (their own most-repeated terms) inline, without needing a
+// manual search. Only applied to caller ("user") bubbles.
+function highlightKeywords(text, words) {
+  if (!words || words.length === 0) return text;
+  const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const re = new RegExp(`\\b(${escaped.join("|")})\\b`, "gi");
+  const parts = text.split(re);
+  if (parts.length === 1) return text;
+  const lower = new Set(words.map((w) => w.toLowerCase()));
+  return parts.map((part, i) =>
+    lower.has(part.toLowerCase()) ? (
+      <span className="kw" key={i}>{part}</span>
+    ) : (
+      <span key={i}>{part}</span>
+    )
   );
 }
 
@@ -68,6 +89,15 @@ export default function LeadDetailPage() {
   }, [id]);
 
   const messages = call?.messages || [];
+
+  // Mined live from this call's own caller turns — "any word coming out of
+  // the person talking on the other end", ranked by how often they said it.
+  const callerKeywords = useMemo(() => {
+    const callerTexts = messages.filter((m) => m.role === "user").map((m) => m.text);
+    return extractKeywords(callerTexts, { max: 10, minCount: 1, minLen: 4 });
+  }, [messages]);
+  const callerKeywordWords = useMemo(() => callerKeywords.map((k) => k.word), [callerKeywords]);
+
   const visibleMessages = useMemo(() => {
     if (!tSearch.trim()) return messages;
     const q = tSearch.trim().toLowerCase();
@@ -82,7 +112,7 @@ export default function LeadDetailPage() {
   };
 
   if (loading) {
-    return <div className="page"><div className="skeleton">Loading call…</div></div>;
+    return <div className="page"><div className="skel-block" style={{ height: 460 }} /></div>;
   }
   if (error) {
     return (
@@ -101,7 +131,7 @@ export default function LeadDetailPage() {
     <div className="page">
       <Link href="/leads" className="back-link">← Back to leads</Link>
 
-      <div className="detail-head">
+      <div className="detail-head fade-up">
         <div>
           <div className="detail-title">{contactName(call)}</div>
           <div className="detail-sub">
@@ -123,8 +153,19 @@ export default function LeadDetailPage() {
         </div>
       </div>
 
-      <div className="detail-grid">
+      <div className="detail-grid fade-up">
         <div>
+          {callerKeywords.length > 0 && (
+            <div className="info-card">
+              <h4>Key terms from this caller</h4>
+              <div className="kt-wrap">
+                {callerKeywords.map((k) => (
+                  <span className="kt-chip" key={k.word}>{k.word}{k.count > 1 && <span className="n">×{k.count}</span>}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="info-card">
             <h4>Contact</h4>
             <div className="info-row"><dt>Name</dt><dd>{call.contact?.full_name || "—"}</dd></div>
@@ -212,10 +253,14 @@ export default function LeadDetailPage() {
               <div className="empty-inline">No lines match &quot;{tSearch}&quot;</div>
             ) : (
               visibleMessages.map((m, i) => (
-                <div className={`bubble-row ${m.role}`} key={i}>
+                <div className={`bubble-row ${m.role}`} key={i} style={{ animationDelay: `${Math.min(i, 25) * 0.02}s` }}>
                   <div className="who-label">{m.role === "assistant" ? "Riley" : "Caller"}</div>
                   <div className="bubble" style={{ [m.role === "assistant" ? "borderTopLeftRadius" : "borderTopRightRadius"]: 4 }} onClick={() => seek(m)}>
-                    {highlight(m.text, tSearch)}
+                    {tSearch
+                      ? highlightSearch(m.text, tSearch)
+                      : m.role === "user"
+                      ? highlightKeywords(m.text, callerKeywordWords)
+                      : m.text}
                   </div>
                   {typeof m.secondsFromStart === "number" && (
                     <div className="bubble-time">{fmtDuration(m.secondsFromStart)}</div>

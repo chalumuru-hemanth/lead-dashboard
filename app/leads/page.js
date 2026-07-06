@@ -27,9 +27,51 @@ function Badge({ label, color }) {
   );
 }
 
+function toCsv(rows) {
+  const headers = ["Name", "Organization", "Role", "Intent", "Outcome", "Urgency", "Sentiment", "Needs follow-up", "Next step", "Duration (s)", "Created at"];
+  const escape = (v) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [headers.join(",")];
+  rows.forEach((c) => {
+    lines.push(
+      [
+        contactName(c),
+        c.contact?.organization || "",
+        c.contact?.role_title || "",
+        c.intent || "",
+        OUTCOME_LABEL[c.outcome] || c.outcome || "",
+        URGENCY_LABEL[urgency(c)] || "",
+        c.sentiment || "",
+        needsFollowUp(c) ? "yes" : "no",
+        c.follow_up?.next_step || "",
+        c.durationSeconds != null ? Math.round(c.durationSeconds) : "",
+        c.createdAt || "",
+      ]
+        .map(escape)
+        .join(",")
+    );
+  });
+  return lines.join("\n");
+}
+
+function downloadCsv(rows) {
+  const csv = toCsv(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `riley-leads-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function LeadsPage() {
   return (
-    <Suspense fallback={<div className="page"><div className="skeleton">Loading…</div></div>}>
+    <Suspense fallback={<div className="page"><div className="skel-block" style={{ height: 400 }} /></div>}>
       <LeadsInner />
     </Suspense>
   );
@@ -100,12 +142,12 @@ function LeadsInner() {
   const activeCount = outcomeFilter.length + urgencyFilter.length + reworkFilter.length + followupFilter.length;
 
   if (loading && calls.length === 0) {
-    return <div className="page"><div className="skeleton">Loading calls from Vapi…</div></div>;
+    return <div className="page"><div className="skel-block" style={{ height: 460 }} /></div>;
   }
 
   return (
     <div className="page">
-      <div className="page-head">
+      <div className="page-head fade-up">
         <div>
           <h1>Leads</h1>
           <p>Every call Riley has made, searchable and filterable. Click a row to read the transcript and full detail.</p>
@@ -116,7 +158,7 @@ function LeadsInner() {
         <div className="notice error"><span>⚠</span><span><b>Couldn&apos;t load calls.</b> {error}</span></div>
       )}
 
-      <div className="toolbar">
+      <div className="toolbar fade-up">
         <div className="search-box">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M20 20l-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
           <input placeholder="Search name, org, summary…" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -141,13 +183,17 @@ function LeadsInner() {
         {activeCount > 0 && (
           <button className="chip" onClick={clearAll} style={{ color: "var(--danger)", borderColor: "var(--danger)" }}>Clear filters ({activeCount})</button>
         )}
+        <button className="btn" onClick={() => downloadCsv(filtered)} disabled={filtered.length === 0} title="Export the currently filtered leads as CSV">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 21h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          Export CSV
+        </button>
         <span className="result-count">{filtered.length} lead{filtered.length === 1 ? "" : "s"}</span>
       </div>
 
       {filtered.length === 0 ? (
         <div className="table-wrap"><div className="empty">No calls match these filters.</div></div>
       ) : (
-        <div className="table-wrap">
+        <div className="table-wrap fade-up">
           <div className="table-head">
             <button onClick={() => setSort("name")}>Lead {sortIcon("name")}</button>
             <span>Intent</span>
@@ -158,8 +204,8 @@ function LeadsInner() {
             <button onClick={() => setSort("duration")}>Length {sortIcon("duration")}</button>
             <button onClick={() => setSort("createdAt")}>When {sortIcon("createdAt")}</button>
           </div>
-          {filtered.map((c) => (
-            <Link key={c.id} href={`/leads/${c.id}`} className="table-row">
+          {filtered.map((c, i) => (
+            <Link key={c.id} href={`/leads/${c.id}`} className="table-row fade-in" style={{ animationDelay: `${Math.min(i, 20) * 0.02}s` }}>
               <div>
                 <div className="lead-name">
                   {contactName(c)}

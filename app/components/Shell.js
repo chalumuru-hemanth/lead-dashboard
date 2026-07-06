@@ -1,9 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCalls } from "../providers";
 import { timeAgo, needsFollowUp } from "@/lib/constants";
+import CommandPalette from "./CommandPalette";
+import PageTransition from "./PageTransition";
 
 const NAV = [
   {
@@ -30,11 +33,16 @@ export default function Shell({ children }) {
   const pathname = usePathname();
   const { calls, loading, error, fetchedAt, refresh } = useCalls();
   const followUpCount = calls.filter(needsFollowUp).length;
+  const [cmdkOpen, setCmdkOpen] = useState(false);
+  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
   const isActive = (href) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
 
   return (
     <div className="shell">
+      <div className="bg-glow" aria-hidden="true" />
+      <div className="bg-grid" aria-hidden="true" />
+
       <aside className="rail">
         <div className="rail-brand">
           <div className="rail-mark">
@@ -59,6 +67,19 @@ export default function Shell({ children }) {
           ))}
         </nav>
 
+        <button
+          className="rail-refresh"
+          style={{ justifyContent: "space-between" }}
+          onClick={() => setCmdkOpen(true)}
+          title="Quick search (Cmd/Ctrl+K)"
+        >
+          <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M20 20l-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+            Quick jump
+          </span>
+          <span className="rail-hint">{mac ? "⌘K" : "Ctrl K"}</span>
+        </button>
+
         <div className="rail-foot">
           <div className="rail-status">
             <span className={`dot${error ? " bad" : loading ? " busy" : " good"}`} />
@@ -73,7 +94,16 @@ export default function Shell({ children }) {
         </div>
       </aside>
 
-      <div className="main">{children}</div>
+      <div className="main">
+        <div className="topbar">
+          <button className="kbar" onClick={() => setCmdkOpen(true)}>
+            Search leads <kbd>{mac ? "⌘" : "Ctrl"} K</kbd>
+          </button>
+        </div>
+        <PageTransition>{children}</PageTransition>
+      </div>
+
+      <CommandPalette open={cmdkOpen} onOpenChange={setCmdkOpen} />
     </div>
   );
 }
