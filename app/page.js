@@ -1,489 +1,332 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useMemo } from "react";
+import Link from "next/link";
+import {
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  AreaChart,
+  Area,
+} from "recharts";
+import { useCalls } from "./providers";
+import {
+  OUTCOME_LABEL,
+  OUTCOME_COLOR,
+  URGENCY_LABEL,
+  URGENCY_COLOR,
+  SENTIMENT_COLOR,
+  urgency,
+  rework,
+  needsFollowUp,
+  contactName,
+  fmtDuration,
+  fmtDateTime,
+  dayKey,
+} from "@/lib/constants";
 
-const OUTCOME_LABEL = {
-  connected: "Connected",
-  left_voicemail: "Left voicemail",
-  no_answer: "No answer",
-  not_interested: "Not interested",
-  call_back_requested: "Call back requested",
-  meeting_scheduled: "Meeting scheduled",
-  other: "Other",
-};
-const OUTCOME_STYLE = {
-  meeting_scheduled: { c: "var(--brand-strong)", bg: "var(--brand-tint)" },
-  connected: { c: "var(--info-ink)", bg: "var(--info-tint)" },
-  call_back_requested: { c: "#8A5A08", bg: "var(--warn-tint)" },
-  not_interested: { c: "var(--danger)", bg: "var(--danger-tint)" },
-  left_voicemail: { c: "var(--ink-400)", bg: "var(--surface-2)" },
-  no_answer: { c: "var(--ink-400)", bg: "var(--surface-2)" },
-  other: { c: "var(--ink-400)", bg: "var(--surface-2)" },
-};
-const URGENCY_STYLE = {
-  high: { c: "var(--danger)", bg: "var(--danger-tint)", label: "High" },
-  medium: { c: "#8A5A08", bg: "var(--warn-tint)", label: "Medium" },
-  low: { c: "var(--ink-400)", bg: "var(--surface-2)", label: "Low" },
-};
-const SENT_ICON = { positive: "🙂", neutral: "😐", negative: "🙁" };
-const POLL_MS = 20000;
-
-function rework(c) {
-  return (c.prior_auth && c.prior_auth.denials_rework_level) || "unknown";
-}
-function urgency(c) {
-  return (c.qualification && c.qualification.urgency) || "low";
-}
-function needsFollowUp(c) {
-  return !!(c.follow_up && c.follow_up.needs_follow_up);
-}
-function timeAgo(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  const diffMs = Date.now() - d.getTime();
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
-
-function Badge({ label, style }) {
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
   return (
-    <span className="badge" style={{ color: style.c, background: style.bg }}>
-      <span className="pd" style={{ background: style.c }} />
-      {label}
-    </span>
+    <div style={{ background: "#0F1222", color: "#fff", padding: "8px 12px", borderRadius: 10, fontSize: 12, fontWeight: 600 }}>
+      {label ? <div style={{ opacity: 0.6, marginBottom: 2 }}>{label}</div> : null}
+      {payload.map((p, i) => (
+        <div key={i}>{p.name}: {p.value}</div>
+      ))}
+    </div>
   );
 }
 
-function Row({ c, expanded, onToggle }) {
-  const os = OUTCOME_STYLE[c.outcome] || OUTCOME_STYLE.other;
-  const us = URGENCY_STYLE[urgency(c)];
-  const contact = c.contact || {};
-  return (
-    <>
-      <div className={`row${expanded ? " expanded" : ""}`} onClick={() => onToggle(c.id)}>
-        <div className="cell-title">
-          <div className="t">
-            {contact.full_name || "Unknown caller"}
-            {!c.hasStructuredData && <span className="legacy-pill">No structured data</span>}
-          </div>
-          <div className="s">
-            {contact.role_title || "—"}
-            {contact.organization && contact.organization !== "—" ? ` · ${contact.organization}` : ""}
-          </div>
-        </div>
-        <div>
-          <Badge label={c.outcome ? OUTCOME_LABEL[c.outcome] || c.outcome : "Unknown"} style={c.outcome ? os : OUTCOME_STYLE.other} />
-        </div>
-        <div>{c.qualification ? <Badge label={us.label} style={us} /> : "—"}</div>
-        <div className="sent">{SENT_ICON[c.sentiment] || ""}</div>
-        <div className="cell-title">
-          <div className="t" style={{ fontWeight: 600, fontSize: 12.5 }}>
-            {(c.follow_up && c.follow_up.next_step) || "—"}
-          </div>
-          <div className="s">
-            {needsFollowUp(c)
-              ? ((c.follow_up.follow_up_timeframe || "unknown") + "").replace("_", " ")
-              : "no action needed"}
-          </div>
-        </div>
-        <div className="when">{timeAgo(c.createdAt)}</div>
-        <div className="chev-toggle">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-        </div>
-      </div>
-      <div className="detail">
-        <div className="dl">
-          <div>
-            <dt>Intent</dt>
-            <dd>{c.intent ? c.intent.replace("_", " ") : "—"}</dd>
-          </div>
-          <div>
-            <dt>Denials / rework</dt>
-            <dd>{rework(c)}</dd>
-          </div>
-          <div>
-            <dt>Good fit</dt>
-            <dd>
-              {c.qualification && c.qualification.is_good_fit === true
-                ? "Yes"
-                : c.qualification && c.qualification.is_good_fit === false
-                ? "No"
-                : "—"}
-            </dd>
-          </div>
-        </div>
-        {c.prior_auth && c.prior_auth.pain_points && c.prior_auth.pain_points.length > 0 && (
-          <div style={{ marginBottom: 8 }}>
-            <dt style={{ fontSize: 10.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".05em", color: "var(--ink-300)", marginBottom: 4, display: "block" }}>
-              Pain points
-            </dt>
-            <div className="chips">
-              {c.prior_auth.pain_points.map((p, i) => (
-                <span className="chip" key={i}>{p}</span>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="summary">{c.summaryText || "No summary captured for this call."}</div>
-        {c.recordingUrl && (
-          <a className="reclink" href={c.recordingUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
-            ▶ Listen to recording
-          </a>
-        )}
-      </div>
-    </>
-  );
-}
+export default function Overview() {
+  const { calls, loading, error } = useCalls();
+  const structured = useMemo(() => calls.filter((c) => c.hasStructuredData), [calls]);
 
-export default function Page() {
-  const [calls, setCalls] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [fetchedAt, setFetchedAt] = useState(null);
-  const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState({ outcome: [], urgency: [], rework: [], followup: [] });
-  const [groupBy, setGroupBy] = useState("outcome");
-  const [expanded, setExpanded] = useState(() => new Set());
-  const [collapsedGroups, setCollapsedGroups] = useState({});
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [viewOpen, setViewOpen] = useState(false);
-  const firstLoad = useRef(true);
+  const stats = useMemo(() => {
+    const total = calls.length;
+    const needFollow = structured.filter(needsFollowUp).length;
+    const meetings = structured.filter((c) => c.outcome === "meeting_scheduled").length;
+    const conversion = structured.length ? Math.round((meetings / structured.length) * 100) : 0;
+    const durations = calls.map((c) => c.durationSeconds).filter((d) => typeof d === "number");
+    const avgDuration = durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : null;
+    return { total, needFollow, meetings, conversion, avgDuration };
+  }, [calls, structured]);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/calls", { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        setError(data.error || `Request failed (${res.status})`);
-      } else {
-        setCalls(data.calls || []);
-        setFetchedAt(data.fetchedAt || new Date().toISOString());
-        setError(null);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-      firstLoad.current = false;
+  const outcomeData = useMemo(() => {
+    const counts = {};
+    structured.forEach((c) => {
+      const k = c.outcome || "other";
+      counts[k] = (counts[k] || 0) + 1;
+    });
+    return Object.keys(counts).map((k) => ({
+      name: OUTCOME_LABEL[k] || k,
+      value: counts[k],
+      color: OUTCOME_COLOR[k] || "#94A3B8",
+    }));
+  }, [structured]);
+
+  const urgencyData = useMemo(() => {
+    const counts = { high: 0, medium: 0, low: 0 };
+    structured.forEach((c) => (counts[urgency(c)] = (counts[urgency(c)] || 0) + 1));
+    return ["high", "medium", "low"].map((k) => ({
+      name: URGENCY_LABEL[k],
+      value: counts[k],
+      color: URGENCY_COLOR[k],
+    }));
+  }, [structured]);
+
+  const sentimentData = useMemo(() => {
+    const counts = { positive: 0, neutral: 0, negative: 0 };
+    structured.forEach((c) => {
+      const s = c.sentiment || "neutral";
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    return ["positive", "neutral", "negative"].map((k) => ({
+      name: k[0].toUpperCase() + k.slice(1),
+      value: counts[k],
+      color: SENTIMENT_COLOR[k],
+    }));
+  }, [structured]);
+
+  const volumeData = useMemo(() => {
+    const days = [];
+    const now = new Date();
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      days.push(d.toISOString().slice(0, 10));
     }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const id = setInterval(load, POLL_MS);
-    return () => clearInterval(id);
-  }, [load]);
-
-  const toggleFilter = (group, val) => {
-    setFilters((f) => {
-      const set = new Set(f[group]);
-      set.has(val) ? set.delete(val) : set.add(val);
-      return { ...f, [group]: Array.from(set) };
+    const counts = {};
+    calls.forEach((c) => {
+      const k = dayKey(c.createdAt);
+      counts[k] = (counts[k] || 0) + 1;
     });
-  };
-  const clearFilters = () => setFilters({ outcome: [], urgency: [], rework: [], followup: [] });
+    return days.map((d) => ({
+      day: new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      calls: counts[d] || 0,
+    }));
+  }, [calls]);
 
-  const matches = useCallback(
-    (c) => {
-      if (filters.outcome.length && !filters.outcome.includes(c.outcome)) return false;
-      if (filters.urgency.length && !filters.urgency.includes(urgency(c))) return false;
-      if (filters.rework.length && !filters.rework.includes(rework(c))) return false;
-      if (filters.followup.length) {
-        const v = needsFollowUp(c) ? "yes" : "no";
-        if (!filters.followup.includes(v)) return false;
-      }
-      if (search.trim()) {
-        const q = search.trim().toLowerCase();
-        const contact = c.contact || {};
-        const hay = [contact.full_name, contact.organization, contact.role_title, c.summaryText].join(" ").toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    },
-    [filters, search]
+  const painPoints = useMemo(() => {
+    const counts = {};
+    structured.forEach((c) => {
+      (c.prior_auth?.pain_points || []).forEach((p) => {
+        counts[p] = (counts[p] || 0) + 1;
+      });
+    });
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+  }, [structured]);
+  const maxPain = painPoints.length ? painPoints[0][1] : 1;
+
+  const hotLeads = useMemo(
+    () => structured.filter((c) => urgency(c) === "high" && rework(c) === "high"),
+    [structured]
   );
 
-  const filtered = useMemo(() => calls.filter(matches), [calls, matches]);
+  const recentFollowUps = useMemo(
+    () =>
+      structured
+        .filter(needsFollowUp)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 5),
+    [structured]
+  );
 
-  const groupKey = (c) => {
-    if (groupBy === "outcome") return c.outcome || "other";
-    if (groupBy === "urgency") return urgency(c);
-    if (groupBy === "followup") return needsFollowUp(c) ? "yes" : "no";
-    return "all";
-  };
-  const groupLabel = (k) => {
-    if (groupBy === "outcome") return OUTCOME_LABEL[k] || k;
-    if (groupBy === "urgency") return (URGENCY_STYLE[k] || {}).label || k;
-    if (groupBy === "followup") return k === "yes" ? "Needs follow-up" : "No action needed";
-    return "All calls";
-  };
-  const groupColor = (k) => {
-    if (groupBy === "outcome") return (OUTCOME_STYLE[k] || OUTCOME_STYLE.other).c;
-    if (groupBy === "urgency") return (URGENCY_STYLE[k] || URGENCY_STYLE.low).c;
-    if (groupBy === "followup") return k === "yes" ? "var(--danger)" : "var(--grey-200)";
-    return "var(--ink-400)";
-  };
-
-  const groupOrder =
-    groupBy === "outcome"
-      ? ["meeting_scheduled", "call_back_requested", "connected", "left_voicemail", "no_answer", "not_interested", "other"]
-      : groupBy === "urgency"
-      ? ["high", "medium", "low"]
-      : groupBy === "followup"
-      ? ["yes", "no"]
-      : ["all"];
-
-  const buckets = useMemo(() => {
-    const b = {};
-    filtered.forEach((c) => {
-      const k = groupKey(c);
-      (b[k] = b[k] || []).push(c);
-    });
-    return b;
-  }, [filtered, groupBy]);
-
-  const toggleExpand = (id) =>
-    setExpanded((s) => {
-      const n = new Set(s);
-      n.has(id) ? n.delete(id) : n.add(id);
-      return n;
-    });
-  const toggleGroup = (k) => setCollapsedGroups((s) => ({ ...s, [k]: !s[k] }));
-
-  const structured = calls.filter((c) => c.hasStructuredData);
-  const needFollow = structured.filter(needsFollowUp).length;
-  const meetings = structured.filter((c) => c.outcome === "meeting_scheduled").length;
-  const highUrg = structured.filter((c) => urgency(c) === "high").length;
-  const uc = { high: 0, medium: 0, low: 0 };
-  structured.forEach((c) => (uc[urgency(c)] = (uc[urgency(c)] || 0) + 1));
-  const totalForSpark = structured.length || 1;
-  const activeFilterCount = filters.outcome.length + filters.urgency.length + filters.rework.length + filters.followup.length;
+  if (loading && calls.length === 0) {
+    return (
+      <div className="page">
+        <div className="skeleton">Loading calls from Vapi…</div>
+      </div>
+    );
+  }
 
   return (
-    <div className="app">
-      <aside className="side">
-        <div className="center">
-          <div className="mark">
-            <svg viewBox="0 0 24 24" fill="none">
-              <path d="M3 6h11l-6 12z" fill="#00FF7D" />
-              <path d="M13 4l8 14h-8z" fill="#00FF7D" opacity=".55" />
-            </svg>
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1>Overview</h1>
+          <p>Live analytics across every call Riley has completed — refreshes automatically as new leads come in.</p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice error">
+          <span>⚠</span>
+          <span><b>Couldn&apos;t load calls.</b> {error}</span>
+        </div>
+      )}
+
+      {!error && calls.length > 0 && structured.length === 0 && (
+        <div className="notice">
+          <span>ⓘ</span>
+          <span>None of the fetched calls have structured data yet. Charts will populate once Riley finishes analyzing a call.</span>
+        </div>
+      )}
+
+      <div className="kpi-grid">
+        <div className="kpi">
+          <div className="k">Total calls</div>
+          <div className="v">{stats.total}</div>
+          <div className="d">{structured.length} with structured data</div>
+        </div>
+        <div className="kpi">
+          <div className="k">Needs follow-up</div>
+          <div className="v">{stats.needFollow}</div>
+          <div className="d">{structured.length ? Math.round((stats.needFollow / structured.length) * 100) : 0}% of analyzed calls</div>
+        </div>
+        <div className="kpi">
+          <div className="k">Meetings scheduled</div>
+          <div className="v">{stats.meetings}</div>
+          <div className="d up">{stats.conversion}% conversion rate</div>
+        </div>
+        <div className="kpi">
+          <div className="k">Avg call length</div>
+          <div className="v">{fmtDuration(stats.avgDuration)}</div>
+          <div className="d">minutes:seconds</div>
+        </div>
+      </div>
+
+      {hotLeads.length > 0 && (
+        <div className="callout">
+          <div className="ci">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4L12 2z" fill="#fff" /></svg>
           </div>
           <div>
-            <div className="name">Caldarium</div>
-            <div className="sub">Voice · Riley</div>
+            <h4>{hotLeads.length} hot lead{hotLeads.length === 1 ? "" : "s"} — high urgency &amp; high denial/rework</h4>
+            <p>These calls combine urgent qualification with a high denials-rework signal. Worth prioritizing today.</p>
           </div>
+          <Link className="go" href="/leads?urgency=high&rework=high">Review now →</Link>
         </div>
-        <nav className="nav">
-          <a className="on" href="#">
-            <svg className="ic" viewBox="0 0 24 24" fill="none">
-              <path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            Lead analysis
-          </a>
-        </nav>
-        <div className="nudge">
-          <h4>Live data</h4>
-          <p>Polling Vapi&apos;s API every {POLL_MS / 1000}s for assistant Riley&apos;s calls. Refresh the page any time for the latest.</p>
-        </div>
-      </aside>
+      )}
 
-      <div className="main">
-        <div className="top">
-          <h1>Lead analysis</h1>
-          <div className="search">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
-              <path d="M20 20l-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            <input placeholder="Search name, org, or summary…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <div className="right">
-            <span className="status">{fetchedAt ? `Updated ${timeAgo(fetchedAt)}` : ""}</span>
-            <button className="iconbtn" title="Refresh now" onClick={load} disabled={loading}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <path d="M4 4v5h5M20 20v-5h-5M4.6 15A8 8 0 0019 9M19.4 9A8 8 0 005 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-            <div className="avatar">HC</div>
-          </div>
+      <div className="grid-2">
+        <div className="card">
+          <h3>Call volume</h3>
+          <div className="sub">Last 14 days</div>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={volumeData}>
+              <defs>
+                <linearGradient id="vol" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#4F46E5" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="#4F46E5" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="#E9EAF3" vertical={false} />
+              <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#A7AABF" }} axisLine={false} tickLine={false} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#A7AABF" }} axisLine={false} tickLine={false} width={24} />
+              <Tooltip content={<ChartTooltip />} />
+              <Area type="monotone" dataKey="calls" stroke="#4F46E5" strokeWidth={2.5} fill="url(#vol)" />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
 
-        <div className="content">
-          {error && (
-            <div className="notice error">
-              <span>⚠</span>
-              <span>
-                <b>Couldn&apos;t load calls.</b> {error}
-              </span>
-            </div>
-          )}
-          {!error && !loading && calls.length > 0 && calls.every((c) => !c.hasStructuredData) && (
-            <div className="notice">
-              <span>ⓘ</span>
-              <span>
-                None of the fetched calls have <code>analysis.structuredData</code> yet — they predate enabling Riley&apos;s
-                structured extraction, or that call hasn&apos;t finished analysis. New calls will populate automatically.
-              </span>
-            </div>
-          )}
-
-          {loading && calls.length === 0 ? (
-            <div className="skeleton">Loading calls from Vapi…</div>
+        <div className="card">
+          <h3>Outcomes</h3>
+          <div className="sub">{structured.length} analyzed calls</div>
+          {outcomeData.length === 0 ? (
+            <div className="empty-inline">No analyzed calls yet</div>
           ) : (
             <>
-              <div className="bento">
-                <div className="tile hero">
-                  <div className="k">Calls analyzed</div>
-                  <div className="v">{calls.length}</div>
-                  <div className="meta">{structured.length} with structured data</div>
-                  <svg className="glyph" width="120" height="120" viewBox="0 0 24 24" fill="none">
-                    <path d="M3 6h11l-6 12z" fill="#00FF7D" />
-                    <path d="M13 4l8 14h-8z" fill="#fff" />
-                  </svg>
-                </div>
-                <div className="tile">
-                  <div className="k">Needs follow-up</div>
-                  <div className="v">{needFollow}</div>
-                  <div className="spark">
-                    <i style={{ width: `${(uc.high / totalForSpark) * 100}%`, background: "var(--danger)" }} />
-                    <i style={{ width: `${(uc.medium / totalForSpark) * 100}%`, background: "var(--warn)" }} />
-                    <i style={{ width: `${(uc.low / totalForSpark) * 100}%`, background: "var(--grey-100)" }} />
-                  </div>
-                </div>
-                <div className="tile">
-                  <div className="k">Meetings scheduled</div>
-                  <div className="v">{meetings}</div>
-                  <div className="meta">of {structured.length} analyzed calls</div>
-                </div>
-                <div className="tile">
-                  <div className="k">High urgency</div>
-                  <div className="v" style={{ color: "var(--danger)" }}>{highUrg}</div>
-                  <div className="meta">flagged by Riley&apos;s qualification step</div>
-                </div>
-              </div>
-
-              <div className="toolbar">
-                <div className={`filterwrap${filterOpen ? " open" : ""}`}>
-                  <button className="filterbtn" onClick={() => setFilterOpen((o) => !o)}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-                      <path d="M3 5h18l-7 8v6l-4 2v-8L3 5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                    </svg>
-                    Filters
-                    <span className="fcount">{activeFilterCount}</span>
-                  </button>
-                  <div className="filterpanel">
-                    <div className="fgroup">
-                      <div className="ft">Outcome</div>
-                      <div className="fchips">
-                        {Object.keys(OUTCOME_LABEL).map((k) => (
-                          <button key={k} className={`fchip${filters.outcome.includes(k) ? " on" : ""}`} onClick={() => toggleFilter("outcome", k)}>
-                            {OUTCOME_LABEL[k]}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="fgroup">
-                      <div className="ft">Urgency</div>
-                      <div className="fchips">
-                        {["high", "medium", "low"].map((k) => (
-                          <button key={k} className={`fchip${filters.urgency.includes(k) ? " on" : ""}`} onClick={() => toggleFilter("urgency", k)}>
-                            {URGENCY_STYLE[k].label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="fgroup">
-                      <div className="ft">Denials / rework level</div>
-                      <div className="fchips">
-                        {["high", "medium", "low", "unknown"].map((k) => (
-                          <button key={k} className={`fchip${filters.rework.includes(k) ? " on" : ""}`} onClick={() => toggleFilter("rework", k)}>
-                            {k[0].toUpperCase() + k.slice(1)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="fgroup">
-                      <div className="ft">Follow-up</div>
-                      <div className="fchips">
-                        <button className={`fchip${filters.followup.includes("yes") ? " on" : ""}`} onClick={() => toggleFilter("followup", "yes")}>
-                          Needs follow-up
-                        </button>
-                        <button className={`fchip${filters.followup.includes("no") ? " on" : ""}`} onClick={() => toggleFilter("followup", "no")}>
-                          No action needed
-                        </button>
-                      </div>
-                    </div>
-                    <div className="fpfoot">
-                      <button className="fclear" onClick={clearFilters}>Clear all</button>
-                      <span className="fresult">{filtered.length} call{filtered.length === 1 ? "" : "s"}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className={`viewdd${viewOpen ? " open" : ""}`}>
-                  <button className="ddtrigger" onClick={() => setViewOpen((o) => !o)}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
-                      <path d="M4 7h6M4 12h6M4 17h6M14 7h6M14 12h6M14 17h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    </svg>
-                    <span>
-                      {groupBy === "outcome" && "Group by outcome"}
-                      {groupBy === "urgency" && "Group by urgency"}
-                      {groupBy === "followup" && "Group by follow-up"}
-                      {groupBy === "none" && "No grouping"}
-                    </span>
-                    <svg className="cv" width="15" height="15" viewBox="0 0 24 24" fill="none">
-                      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                  <div className="ddmenu">
-                    {[
-                      ["outcome", "Group by outcome"],
-                      ["urgency", "Group by urgency"],
-                      ["followup", "Group by follow-up"],
-                      ["none", "No grouping"],
-                    ].map(([val, label]) => (
-                      <button key={val} className={groupBy === val ? "on" : ""} onClick={() => { setGroupBy(val); setViewOpen(false); }}>
-                        {label}
-                      </button>
+              <ResponsiveContainer width="100%" height={170}>
+                <PieChart>
+                  <Pie data={outcomeData} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={2}>
+                    {outcomeData.map((d, i) => (
+                      <Cell key={i} fill={d.color} stroke="none" />
                     ))}
-                  </div>
-                </div>
+                  </Pie>
+                  <Tooltip content={<ChartTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="legend-row">
+                {outcomeData.map((d, i) => (
+                  <span className="legend-item" key={i}>
+                    <span className="legend-dot" style={{ background: d.color }} />
+                    {d.name} ({d.value})
+                  </span>
+                ))}
               </div>
-
-              {filtered.length === 0 ? (
-                <div className="empty">No calls match these filters.</div>
-              ) : (
-                groupOrder
-                  .filter((k) => buckets[k] && buckets[k].length)
-                  .map((k) => (
-                    <div key={k} className={`group${collapsedGroups[k] ? " collapsed" : ""}`}>
-                      <div className="ghead" onClick={() => toggleGroup(k)}>
-                        <span className="dot" style={{ background: groupColor(k) }} />
-                        {groupLabel(k)}
-                        <span className="n">{buckets[k].length}</span>
-                        <svg className="lchev" width="16" height="16" viewBox="0 0 24 24" fill="none">
-                          <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </div>
-                      <div className="rows">
-                        {buckets[k].map((c) => (
-                          <Row key={c.id} c={c} expanded={expanded.has(c.id)} onToggle={toggleExpand} />
-                        ))}
-                      </div>
-                    </div>
-                  ))
-              )}
             </>
           )}
         </div>
+      </div>
+
+      <div className="grid-3">
+        <div className="card">
+          <h3>Urgency</h3>
+          <div className="sub">Qualification signal</div>
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={urgencyData} layout="vertical" margin={{ left: 8 }}>
+              <XAxis type="number" hide allowDecimals={false} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#5B5F76", fontWeight: 600 }} axisLine={false} tickLine={false} width={62} />
+              <Tooltip content={<ChartTooltip />} />
+              <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={18}>
+                {urgencyData.map((d, i) => (
+                  <Cell key={i} fill={d.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="card">
+          <h3>Sentiment</h3>
+          <div className="sub">How the call felt</div>
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={sentimentData} layout="vertical" margin={{ left: 8 }}>
+              <XAxis type="number" hide allowDecimals={false} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: "#5B5F76", fontWeight: 600 }} axisLine={false} tickLine={false} width={62} />
+              <Tooltip content={<ChartTooltip />} />
+              <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={18}>
+                {sentimentData.map((d, i) => (
+                  <Cell key={i} fill={d.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="card">
+          <h3>Top pain points</h3>
+          <div className="sub">Mentioned across calls</div>
+          {painPoints.length === 0 ? (
+            <div className="empty-inline">None captured yet</div>
+          ) : (
+            painPoints.map(([label, n], i) => (
+              <div className="rank-row" key={i}>
+                <span className="label" title={label}>{label}</span>
+                <span className="rank-track"><span className="rank-fill" style={{ width: `${(n / maxPain) * 100}%` }} /></span>
+                <span className="rank-n">{n}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>Needs follow-up</h3>
+        <div className="sub">Most recent leads awaiting action</div>
+        {recentFollowUps.length === 0 ? (
+          <div className="empty-inline">Nothing waiting on you right now</div>
+        ) : (
+          <div className="table-wrap" style={{ boxShadow: "none" }}>
+            {recentFollowUps.map((c) => (
+              <Link key={c.id} href={`/leads/${c.id}`} className="table-row" style={{ gridTemplateColumns: "1.6fr 1fr 1.4fr 100px" }}>
+                <div className="lead-name">{contactName(c)}<span className="lead-sub" style={{ marginLeft: 6, fontWeight: 500 }}>{c.contact?.role_title || ""}</span></div>
+                <div>{OUTCOME_LABEL[c.outcome] || "—"}</div>
+                <div className="lead-sub">{c.follow_up?.next_step || "—"}</div>
+                <div style={{ textAlign: "right", color: "var(--ink-400)", fontWeight: 600, fontSize: 12 }}>{fmtDateTime(c.createdAt)}</div>
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

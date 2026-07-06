@@ -1,9 +1,25 @@
-// Server-side route. Runs on the server only, so VAPI_PRIVATE_KEY never
-// reaches the browser. Returns a lightweight list (no transcript/messages —
-// those are fetched per-call from /api/calls/[id] to keep this payload small).
+// Per-call detail route. Includes the full transcript + turn-by-turn
+// messages + recording URL, which we deliberately leave out of the list
+// route (/api/calls) to keep that payload small for the overview/table views.
 export const dynamic = "force-dynamic";
 
 const VAPI_BASE = "https://api.vapi.ai";
+
+function normalizeMessages(c) {
+  const raw =
+    c.messages ||
+    (c.artifact && c.artifact.messages) ||
+    (c.artifact && c.artifact.messagesOpenAIFormatted) ||
+    [];
+  return raw
+    .filter((m) => m && (m.message || m.content) && m.role !== "system")
+    .map((m) => ({
+      role: m.role === "bot" || m.role === "assistant" ? "assistant" : "user",
+      text: m.message || m.content || "",
+      secondsFromStart:
+        typeof m.secondsFromStart === "number" ? m.secondsFromStart : null,
+    }));
+}
 
 function normalizeCall(c) {
   const analysis = c.analysis || {};
@@ -18,7 +34,9 @@ function normalizeCall(c) {
     cost: typeof c.cost === "number" ? c.cost : null,
     durationSeconds:
       startedAt && endedAt ? Math.max(0, (endedAt - startedAt) / 1000) : null,
-    hasRecording: !!(c.recordingUrl || (c.artifact && c.artifact.recordingUrl)),
+    recordingUrl: c.recordingUrl || (c.artifact && c.artifact.recordingUrl) || null,
+    transcript: c.transcript || (c.artifact && c.artifact.transcript) || null,
+    messages: normalizeMessages(c),
     summaryText: analysis.summary || c.summary || null,
     hasStructuredData: !!sd,
     contact: (sd && sd.contact) || null,
@@ -31,28 +49,19 @@ function normalizeCall(c) {
   };
 }
 
-export async function GET() {
+export async function GET(request, { params }) {
   const key = process.env.VAPI_PRIVATE_KEY;
-  const assistantId = process.env.VAPI_ASSISTANT_ID;
-  const limit = process.env.VAPI_FETCH_LIMIT || "200";
-
   if (!key) {
     return Response.json(
-      {
-        error:
-          "VAPI_PRIVATE_KEY is not set. Add it to your environment (see README.md) and redeploy/restart.",
-      },
+      { error: "VAPI_PRIVATE_KEY is not set on the server." },
       { status: 500 }
     );
   }
 
-  const params = new URLSearchParams();
-  if (assistantId) params.set("assistantId", assistantId);
-  params.set("limit", limit);
-
+  const { id } = params;
   let res;
   try {
-    res = await fetch(`${VAPI_BASE}/call?${params.toString()}`, {
+    res = await fetch(`${VAPI_BASE}/call/${id}`, {
       headers: { Authorization: `Bearer ${key}` },
       cache: "no-store",
     });
@@ -72,10 +81,5 @@ export async function GET() {
   }
 
   const raw = await res.json();
-  const list = Array.isArray(raw) ? raw : raw.results || raw.data || [];
-  const calls = list
-    .map(normalizeCall)
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-  return Response.json({ calls, fetchedAt: new Date().toISOString() });
+  return Response.json({ call: normalizeCall(raw) });
 }
