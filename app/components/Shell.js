@@ -3,8 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCalls } from "../providers";
-import { timeAgo, needsFollowUp } from "@/lib/constants";
+import { useCalls, useEmails } from "../providers";
+import { timeAgo, needsFollowUp, needsAttention } from "@/lib/constants";
 import CommandPalette from "./CommandPalette";
 import PageTransition from "./PageTransition";
 
@@ -27,12 +27,23 @@ const NAV = [
       </svg>
     ),
   },
+  {
+    href: "/outreach",
+    label: "Outreach",
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+        <path d="M3 7l9 6 9-6M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
 ];
 
 export default function Shell({ children }) {
   const pathname = usePathname();
   const { calls, loading, error, fetchedAt, refresh } = useCalls();
+  const { rows: emailRows } = useEmails();
   const followUpCount = calls.filter(needsFollowUp).length;
+  const attentionCount = emailRows.filter(needsAttention).length;
   const [cmdkOpen, setCmdkOpen] = useState(false);
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
@@ -63,6 +74,7 @@ export default function Shell({ children }) {
               <span className="ic">{n.icon}</span>
               {n.label}
               {n.href === "/leads" && followUpCount > 0 && <span className="rail-badge">{followUpCount}</span>}
+              {n.href === "/outreach" && attentionCount > 0 && <span className="rail-badge">{attentionCount}</span>}
             </Link>
           ))}
         </nav>

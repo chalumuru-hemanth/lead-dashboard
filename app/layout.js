@@ -1,5 +1,5 @@
 import "./globals.css";
-import { CallsProvider } from "./providers";
+import { CallsProvider, EmailsProvider } from "./providers";
 import Shell from "./components/Shell";
 
 export const metadata = {
@@ -20,7 +20,9 @@ export default function RootLayout({ children }) {
       </head>
       <body>
         <CallsProvider>
-          <Shell>{children}</Shell>
+          <EmailsProvider>
+            <Shell>{children}</Shell>
+          </EmailsProvider>
         </CallsProvider>
       </body>
     </html>

@@ -77,3 +77,49 @@ so it isn't publicly reachable.
 - Poll interval: `POLL_MS` in `app/providers.js` (default 20000ms).
 - How many calls to pull: `VAPI_FETCH_LIMIT` env var (default 200).
 - Charts: built with [Recharts](https://recharts.org) in `app/page.js` — a
+## Outreach (email triage) — new section
+
+A fourth page, **Outreach** (`/outreach`), shows replies to the Gmail cold-email
+campaign (the Apps Script in `google-apps-script/`), automatically summarized
+and prioritized by Gemini so a human doesn't have to read every thread to know
+what needs a response.
+
+### How it fits together
+
+1. `google-apps-script/outreach.gs.js` — the existing mail-merge/automation
+   script (unchanged), bound to the Contacts sheet.
+2. `google-apps-script/dashboard-bridge.gs.js` — **new**, paste into the same
+   Apps Script project. Adds a Web App endpoint: `GET` returns every contact
+   row plus the latest reply snippet per thread; `POST` writes AI triage
+   results back into the Sheet (`AIPriority`/`AISummary`/`AIAction`/
+   `AIProcessedAt` columns, created automatically) so the same reply is never
+   re-classified twice.
+3. `app/api/emails/route.js` — server route the dashboard polls; proxies the
+   Web App above.
+4. `app/api/emails/triage/route.js` — server route that batches any
+   un-triaged replies to Gemini (`gemini-2.5-flash` by default) for a
+   priority (`high`/`medium`/`low`), one-line summary, and a suggested next
+   step, then writes the results back to the Sheet via the bridge.
+5. `app/providers.js` (`EmailsProvider`) — polls `/api/emails` every 30s and
+   automatically calls the triage route for anything new, merging results in
+   immediately.
+
+### One-time setup
+
+1. In the Contacts sheet: **Extensions > Apps Script**, add
+   `dashboard-bridge.gs.js` as a new file in the same project as the existing
+   outreach script.
+2. Edit the `SECRET` constant in `setDashboardSecret_()` to a long random
+   string, then run that function once from the Apps Script editor (Run menu
+   > select the function > Run). Authorize when prompted.
+3. **Deploy > New deployment > Web app.** Execute as **Me**, who has access
+   **Anyone**. Deploy, copy the Web app URL.
+4. In Vercel (Project Settings > Environment Variables), add:
+   - `OUTREACH_WEBAPP_URL` — the Web app URL from step 3
+   - `OUTREACH_SECRET` — the same secret from step 2
+   - `GEMINI_API_KEY` — from [Google AI Studio](https://aistudio.google.com/apikey)
+   - `GEMINI_MODEL` — optional, defaults to `gemini-2.5-flash`
+5. Redeploy.
+
+The Sheet doubles as the durable log/cache — anyone can open it and see the
+same `AIPriority`/`AISummary`/`AIAction` columns the dashboard reads.
