@@ -1,13 +1,14 @@
 // Server-side route. Runs on the server only, so VAPI_PRIVATE_KEY never
 // reaches the browser. Returns a lightweight list (no transcript/messages —
 // those are fetched per-call from /api/calls/[id] to keep this payload small).
+import { extractAnalysis } from "@/lib/vapi-analysis";
+
 export const dynamic = "force-dynamic";
 
 const VAPI_BASE = "https://api.vapi.ai";
 
 function normalizeCall(c) {
-  const analysis = c.analysis || {};
-  const sd = analysis.structuredData || null;
+  const { summary, structuredData: sd } = extractAnalysis(c);
   const startedAt = c.startedAt ? new Date(c.startedAt) : null;
   const endedAt = c.endedAt ? new Date(c.endedAt) : null;
 
@@ -19,7 +20,7 @@ function normalizeCall(c) {
     durationSeconds:
       startedAt && endedAt ? Math.max(0, (endedAt - startedAt) / 1000) : null,
     hasRecording: !!(c.recordingUrl || (c.artifact && c.artifact.recordingUrl)),
-    summaryText: analysis.summary || c.summary || null,
+    summaryText: summary,
     hasStructuredData: !!sd,
     contact: (sd && sd.contact) || null,
     intent: (sd && sd.intent) || null,

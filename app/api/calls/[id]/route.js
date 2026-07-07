@@ -1,6 +1,8 @@
 // Per-call detail route. Includes the full transcript + turn-by-turn
 // messages + recording URL, which we deliberately leave out of the list
 // route (/api/calls) to keep that payload small for the overview/table views.
+import { extractAnalysis } from "@/lib/vapi-analysis";
+
 export const dynamic = "force-dynamic";
 
 const VAPI_BASE = "https://api.vapi.ai";
@@ -22,8 +24,7 @@ function normalizeMessages(c) {
 }
 
 function normalizeCall(c) {
-  const analysis = c.analysis || {};
-  const sd = analysis.structuredData || null;
+  const { summary, structuredData: sd } = extractAnalysis(c);
   const startedAt = c.startedAt ? new Date(c.startedAt) : null;
   const endedAt = c.endedAt ? new Date(c.endedAt) : null;
 
@@ -37,7 +38,7 @@ function normalizeCall(c) {
     recordingUrl: c.recordingUrl || (c.artifact && c.artifact.recordingUrl) || null,
     transcript: c.transcript || (c.artifact && c.artifact.transcript) || null,
     messages: normalizeMessages(c),
-    summaryText: analysis.summary || c.summary || null,
+    summaryText: summary,
     hasStructuredData: !!sd,
     contact: (sd && sd.contact) || null,
     intent: (sd && sd.intent) || null,

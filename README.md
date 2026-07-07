@@ -123,3 +123,123 @@ what needs a response.
 
 The Sheet doubles as the durable log/cache — anyone can open it and see the
 same `AIPriority`/`AISummary`/`AIAction` columns the dashboard reads.
+
+## Migrating off deprecated Vapi analysisPlan (Summary + Structured Data)
+
+Vapi has deprecated `analysisPlan.summaryPrompt` **and**
+`analysisPlan.structuredDataPrompt`/`structuredDataSchema` in favor of the
+newer **Structured Outputs** system (schema-based, attached to the assistant
+via `artifactPlan.structuredOutputIds`, results land in
+`call.artifact.structuredOutputs` instead of `call.analysis.*`).
+
+`lib/vapi-analysis.js` reads **both** locations so nothing breaks mid-migration:
+calls already analyzed keep showing their legacy `analysis.summary` /
+`analysis.structuredData`; once you link the new Structured Outputs below to
+Riley, new calls automatically use those instead — no further dashboard
+change needed. Matching is by shape (a `summary` string field, or an object
+with `contact`/`qualification`/`follow_up`/`prior_auth`/`intent`/`outcome`),
+not by a hardcoded output ID, so you can name these whatever you like.
+
+### 1. Create a "Call Summary" structured output
+
+```bash
+curl -X POST https://api.vapi.ai/structured-output \
+  -H "Authorization: Bearer $VAPI_PRIVATE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Call Summary",
+    "type": "ai",
+    "description": "Plain-language summary for a sales rep skimming a lead list",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "2-3 plain sentences: who called and their role/org if mentioned, what they said about their prior-auth workflow or pain points, any objections, and the agreed next step. No markdown, no bullet points, no headers. If they declined to engage or ended the call early, say so in one sentence."
+        }
+      },
+      "required": ["summary"]
+    }
+  }'
+```
+
+### 2. Create a "Lead Data" structured output (replaces the old structuredDataSchema)
+
+```bash
+curl -X POST https://api.vapi.ai/structured-output \
+  -H "Authorization: Bearer $VAPI_PRIVATE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Lead Data",
+    "type": "ai",
+    "description": "Prior-auth lead qualification data extracted from the call",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "contact": {
+          "type": "object",
+          "properties": {
+            "full_name": { "type": "string" },
+            "role_title": { "type": "string" },
+            "organization": { "type": "string" },
+            "phone": { "type": "string" },
+            "email": { "type": "string", "format": "email" }
+          }
+        },
+        "intent": { "type": "string", "enum": ["research", "sales_interest", "support", "scheduling", "other"] },
+        "outcome": { "type": "string", "enum": ["connected", "left_voicemail", "no_answer", "not_interested", "call_back_requested", "meeting_scheduled", "other"] },
+        "sentiment": { "type": "string", "enum": ["positive", "neutral", "negative"] },
+        "prior_auth": {
+          "type": "object",
+          "properties": {
+            "pain_points": { "type": "array", "items": { "type": "string" } },
+            "tools_systems": { "type": "array", "items": { "type": "string" } },
+            "denials_rework_level": { "type": "string", "enum": ["high", "medium", "low", "unknown"] }
+          }
+        },
+        "qualification": {
+          "type": "object",
+          "properties": {
+            "urgency": { "type": "string", "enum": ["high", "medium", "low"] },
+            "is_good_fit": { "type": "boolean" },
+            "reason": { "type": "string" }
+          }
+        },
+        "follow_up": {
+          "type": "object",
+          "properties": {
+            "needs_follow_up": { "type": "boolean" },
+            "next_step": { "type": "string" },
+            "follow_up_timeframe": { "type": "string", "enum": ["immediate", "within_week", "within_month", "unknown"] },
+            "scheduled_time_iso": { "type": "string", "format": "date-time" }
+          }
+        }
+      }
+    }
+  }'
+```
+
+Double-check the enum values above against whatever your original
+`structuredDataSchema` actually used before it was deprecated — these were
+reconstructed from what the dashboard reads, so confirm against Vapi's
+dashboard (or a past call's `analysis.structuredData`) if you still have
+access to view it.
+
+### 3. Link both to Riley
+
+Both curl responses return an `id`. Add both to Riley's assistant:
+
+```bash
+curl -X PATCH https://api.vapi.ai/assistant/<RILEY_ASSISTANT_ID> \
+  -H "Authorization: Bearer $VAPI_PRIVATE_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "artifactPlan": {
+      "structuredOutputIds": ["<summary-output-id>", "<lead-data-output-id>"]
+    }
+  }'
+```
+
+(If Riley's `artifactPlan` already has other settings, fetch the assistant
+first and merge — this PATCH body should only add `structuredOutputIds`, not
+wipe out existing artifact settings.)
