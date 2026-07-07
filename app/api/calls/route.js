@@ -2,7 +2,7 @@
 // reaches the browser. Returns a lightweight list (no transcript/messages —
 // those are fetched per-call from /api/calls/[id] to keep this payload small).
 import { extractAnalysis } from "@/lib/vapi-analysis";
-import { upsertCallSummary } from "@/lib/supabase-sync";
+import { upsertCallSummary, enrichCallsFromSupabase } from "@/lib/supabase-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -75,7 +75,7 @@ export async function GET() {
 
   const raw = await res.json();
   const list = Array.isArray(raw) ? raw : raw.results || raw.data || [];
-  const calls = list
+  let calls = list
     .map(normalizeCall)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
@@ -84,6 +84,13 @@ export async function GET() {
   // exposes" durable store -- Vapi's own list endpoint is capped at
   // VAPI_FETCH_LIMIT, Supabase accumulates the full history forever.
   await Promise.all(list.map((c) => upsertCallSummary(c)));
+
+  // Backfill summary/structured data from Supabase for calls Vapi itself
+  // hasn't analyzed yet (deprecated analysisPlan is flaky; Structured
+  // Outputs only covers calls after it was linked). Keeps the Leads view
+  // from showing empty cells for calls that already have a good Gemini
+  // summary sitting in Supabase from a prior visit or backfill sync.
+  calls = await enrichCallsFromSupabase(calls);
 
   return Response.json({ calls, fetchedAt: new Date().toISOString() });
 }

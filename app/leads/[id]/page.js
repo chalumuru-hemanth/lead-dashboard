@@ -10,12 +10,16 @@ import {
   URGENCY_COLOR,
   SENTIMENT_LABEL,
   SENTIMENT_COLOR,
+  CALL_QUALITY_LABEL,
+  CALL_QUALITY_COLOR,
   urgency,
   rework,
   contactName,
   fmtDuration,
   fmtDateTime,
   extractKeywords,
+  callQuality,
+  leadHeadline,
 } from "@/lib/constants";
 
 function Badge({ label, color }) {
@@ -126,6 +130,7 @@ export default function LeadDetailPage() {
 
   const u = urgency(call);
   const r = rework(call);
+  const q = callQuality(call);
 
   return (
     <div className="page">
@@ -143,7 +148,8 @@ export default function LeadDetailPage() {
             {call.outcome && <Badge label={OUTCOME_LABEL[call.outcome] || call.outcome} color={OUTCOME_COLOR[call.outcome] || "#94A3B8"} />}
             {call.qualification && <Badge label={`${URGENCY_LABEL[u]} urgency`} color={URGENCY_COLOR[u]} />}
             {call.sentiment && <Badge label={SENTIMENT_LABEL[call.sentiment] || call.sentiment} color={SENTIMENT_COLOR[call.sentiment] || "#94A3B8"} />}
-            {!call.hasStructuredData && <span className="legacy-tag">No structured data</span>}
+            {q !== "real" && <Badge label={CALL_QUALITY_LABEL[q]} color={CALL_QUALITY_COLOR[q]} />}
+            {q === "real" && !call.hasStructuredData && <span className="legacy-tag">No structured data yet</span>}
           </div>
         </div>
         <div className="detail-meta">
@@ -217,7 +223,7 @@ export default function LeadDetailPage() {
 
           <div className="info-card">
             <h4>Summary</h4>
-            <div className="summary-text">{call.summaryText || "No summary captured for this call."}</div>
+            <div className="summary-text">{leadHeadline(call)}</div>
           </div>
         </div>
 

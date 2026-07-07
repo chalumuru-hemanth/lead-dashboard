@@ -12,6 +12,7 @@
 // manually (e.g. `curl -H "Authorization: Bearer $CRON_SECRET" .../api/sync`)
 // to run the initial full backfill.
 import { extractAnalysis } from "@/lib/vapi-analysis";
+import { generateCallSummary } from "@/lib/gemini-summary";
 import { getSupabase } from "@/lib/supabase";
 import {
   upsertCallDetail,
@@ -92,10 +93,16 @@ async function backfillCallDetails(key) {
           text: m.message || m.content || "",
           secondsFromStart: typeof m.secondsFromStart === "number" ? m.secondsFromStart : null,
         }));
+      // Same treatment as opening the call in the dashboard: regenerate a
+      // clean summary from the transcript via Gemini rather than settling
+      // for whatever Vapi's own (often inconsistent/deprecated) analysis
+      // produced. Falls back to Vapi's summary if Gemini is unavailable or
+      // there's no transcript to work from.
+      const freshSummary = await generateCallSummary(messages);
       await upsertCallDetail(raw, {
         transcript,
         messages,
-        summary: summary || null,
+        summary: freshSummary || summary || null,
         vapiSummary: (raw.analysis && raw.analysis.summary) || raw.summary || null,
         structuredData,
       });
