@@ -2,6 +2,7 @@
 // messages + recording URL, which we deliberately leave out of the list
 // route (/api/calls) to keep that payload small for the overview/table views.
 import { extractAnalysis } from "@/lib/vapi-analysis";
+import { generateCallSummary } from "@/lib/gemini-summary";
 
 export const dynamic = "force-dynamic";
 
@@ -82,5 +83,15 @@ export async function GET(request, { params }) {
   }
 
   const raw = await res.json();
-  return Response.json({ call: normalizeCall(raw) });
+  const call = normalizeCall(raw);
+
+  // Regenerate the summary fresh from the transcript via Gemini, which fixes
+  // quality for BOTH old calls (verbose/markdown-heavy from a since-changed
+  // Vapi prompt) and new ones -- independent of Vapi's own analysis or
+  // Structured Outputs. Falls back to whatever Vapi provided if there's no
+  // GEMINI_API_KEY set, no transcript, or the request fails.
+  const freshSummary = await generateCallSummary(call.messages);
+  if (freshSummary) call.summaryText = freshSummary;
+
+  return Response.json({ call });
 }
