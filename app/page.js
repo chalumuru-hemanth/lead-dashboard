@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import {
   ResponsiveContainer,
@@ -69,6 +69,16 @@ function Kpi({ label, value, icon, sub, subClass, decimals, format }) {
 }
 
 export default function Overview() {
+  const [archive, setArchive] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/archive/summary")
+      .then((r) => r.json())
+      .then((data) => { if (!cancelled) setArchive(data); })
+      .catch(() => { if (!cancelled) setArchive({ configured: false }); });
+    return () => { cancelled = true; };
+  }, []);
+
   const { calls, loading, error } = useCalls();
   const structured = useMemo(() => calls.filter((c) => c.hasStructuredData), [calls]);
 
@@ -379,6 +389,49 @@ export default function Overview() {
           </div>
         )}
       </div>
+
+      {archive && archive.configured && (
+        <div className="card fade-up" style={{ marginBottom: 16 }}>
+          <h3>All-time archive</h3>
+          <div className="sub">
+            Full history mirrored in Supabase{archive.earliestCallAt ? ` — since ${fmtDateTime(archive.earliestCallAt)}` : ""}, beyond what Vapi's live feed shows
+          </div>
+          {archive.error ? (
+            <div className="empty-inline">Archive unavailable: {archive.error}</div>
+          ) : (
+            <>
+              <div className="kpi-row" style={{ marginTop: 12, marginBottom: 12 }}>
+                <div className="kpi" style={{ padding: "14px 16px" }}>
+                  <div className="k">Calls archived</div>
+                  <div className="v" style={{ fontSize: 22 }}>{archive.totalCalls}</div>
+                </div>
+                <div className="kpi" style={{ padding: "14px 16px" }}>
+                  <div className="k">Sampled spend</div>
+                  <div className="v" style={{ fontSize: 22 }}>${(archive.totalCostSampled || 0).toFixed(2)}</div>
+                </div>
+              </div>
+              {archive.volume && archive.volume.length > 0 && (
+                <div style={{ height: 140 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={archive.volume}>
+                      <defs>
+                        <linearGradient id="archiveFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="var(--accent, #7C8CFF)" stopOpacity={0.5} />
+                          <stop offset="100%" stopColor="var(--accent, #7C8CFF)" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <XAxis dataKey="day" hide />
+                      <YAxis hide />
+                      <Tooltip content={<ChartTooltip />} />
+                      <Area type="monotone" dataKey="count" name="Calls" stroke="var(--accent, #7C8CFF)" fill="url(#archiveFill)" strokeWidth={2} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="card fade-up">
         <h3>Needs follow-up</h3>

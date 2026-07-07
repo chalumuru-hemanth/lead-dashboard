@@ -243,3 +243,69 @@ curl -X PATCH https://api.vapi.ai/assistant/<RILEY_ASSISTANT_ID> \
 (If Riley's `artifactPlan` already has other settings, fetch the assistant
 first and merge — this PATCH body should only add `structuredOutputIds`, not
 wipe out existing artifact settings.)
+
+## Supabase archive (everything Vapi exposes)
+
+Every Vapi resource the account has access to — Calls, Assistants (with
+version history), Phone Numbers, Tools, Squads, Files, Chats, Sessions,
+Evals + Eval Runs, and a daily Analytics snapshot — is mirrored into a
+Supabase Postgres project called "Voice Agent Data". Each table keeps a
+`raw jsonb` column with the untouched Vapi object plus a few normalized
+columns for fast queries, so nothing Vapi returns is ever lost even if the
+dashboard doesn't have a UI for it yet.
+
+### Why
+
+- Vapi's own `/call` list endpoint is capped (`VAPI_FETCH_LIMIT`, default
+  200). Supabase accumulates the full history forever — see the "All-time
+  archive" panel on the Overview page, which reads straight from Supabase.
+- If Vapi ever changes or removes data (retention limits, plan changes,
+  deprecated fields), the Supabase copy is unaffected.
+- It's a durable base for future reporting/BI without hitting Vapi's API
+  every time.
+
+### How it syncs
+
+- **Calls** — dual-write. Every time the dashboard polls `/api/calls` or a
+  user opens a call's detail page (`/api/calls/[id]`), that data is
+  upserted into `vapi_calls` in the same request (best-effort; a Supabase
+  hiccup never breaks the live dashboard).
+- **Everything else** (Assistants, Phone Numbers, Tools, Squads, Files,
+  Chats, Sessions, Evals, Analytics) — nothing in the dashboard currently
+  polls these, so they sync via `GET /api/sync`, meant to be triggered by
+  Vercel Cron (see `vercel.json` — daily at 06:00 UTC). This same route also
+  runs a bounded backfill pass (40 calls per run) that fetches full
+  transcript/messages for any call that's only ever been partially synced
+  (i.e. never opened in the dashboard), so full history accumulates over a
+  few days even for calls nobody clicked into.
+- All sync activity (success and failure, per resource) is logged to
+  `vapi_sync_log` for observability.
+
+### One-time setup
+
+1. In Supabase, the schema (13 tables) has already been created via the
+   Management API against project ref `bffybujjggargsjhxuhh` ("Voice Agent
+   Data"). Nothing to do here unless you want to inspect it (Supabase
+   dashboard → Table Editor).
+2. Add these environment variables in Vercel (Project → Settings →
+   Environment Variables) and redeploy:
+
+   | Variable | Value |
+   |---|---|
+   | `SUPABASE_URL` | `https://bffybujjggargsjhxuhh.supabase.co` |
+   | `SUPABASE_SERVICE_ROLE_KEY` | the project's `service_role` key (Supabase dashboard → Settings → API) |
+   | `CRON_SECRET` | any random string you generate — Vercel automatically sends it as `Authorization: Bearer <value>` when it triggers `/api/sync` via the cron in `vercel.json`, and this route checks that header |
+
+   The service_role key bypasses row-level security — it's only ever read
+   server-side (`lib/supabase.js`), never sent to the browser.
+
+3. Trigger the first sync manually to backfill history (don't wait for the
+   daily cron):
+
+   ```bash
+   curl "https://<your-deployment>/api/sync" -H "Authorization: Bearer <CRON_SECRET>"
+   ```
+
+   Run it a few times (or wait a few days for the daily cron) to fully
+   backfill transcripts for older calls — each run only processes 40 calls
+   at a time to stay within the serverless function's time limit.

@@ -2,6 +2,7 @@
 // reaches the browser. Returns a lightweight list (no transcript/messages —
 // those are fetched per-call from /api/calls/[id] to keep this payload small).
 import { extractAnalysis } from "@/lib/vapi-analysis";
+import { upsertCallSummary } from "@/lib/supabase-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +78,12 @@ export async function GET() {
   const calls = list
     .map(normalizeCall)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  // Dual-write: mirror every call Vapi returns into Supabase (best-effort,
+  // never blocks or fails this response). This is the "everything Vapi
+  // exposes" durable store -- Vapi's own list endpoint is capped at
+  // VAPI_FETCH_LIMIT, Supabase accumulates the full history forever.
+  await Promise.all(list.map((c) => upsertCallSummary(c)));
 
   return Response.json({ calls, fetchedAt: new Date().toISOString() });
 }

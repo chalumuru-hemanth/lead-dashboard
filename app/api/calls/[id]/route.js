@@ -3,6 +3,7 @@
 // route (/api/calls) to keep that payload small for the overview/table views.
 import { extractAnalysis } from "@/lib/vapi-analysis";
 import { generateCallSummary } from "@/lib/gemini-summary";
+import { upsertCallDetail } from "@/lib/supabase-sync";
 
 export const dynamic = "force-dynamic";
 
@@ -92,6 +93,17 @@ export async function GET(request, { params }) {
   // GEMINI_API_KEY set, no transcript, or the request fails.
   const freshSummary = await generateCallSummary(call.messages);
   if (freshSummary) call.summaryText = freshSummary;
+
+  // Dual-write the full-fidelity record (transcript, messages, structured
+  // data, both the fresh Gemini summary and Vapi's own) into Supabase.
+  const { structuredData: sd } = extractAnalysis(raw);
+  await upsertCallDetail(raw, {
+    transcript: call.transcript,
+    messages: call.messages,
+    summary: call.summaryText,
+    vapiSummary: (raw.analysis && raw.analysis.summary) || raw.summary || null,
+    structuredData: sd,
+  });
 
   return Response.json({ call });
 }
